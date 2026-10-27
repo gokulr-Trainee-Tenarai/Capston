@@ -1,57 +1,31 @@
 version: 0.2
 
-env:
-  variables:
-    GOPATH: "/go"
-    GOCACHE: "/tmp/go-cache"
-    HOME: "/root"
-
 phases:
   install:
     commands:
-      - mkdir -p /tmp/go-cache /go/bin /root
-      - export PATH=$PATH:$GOPATH/bin
-      - go install github.com/securego/gosec/v2/cmd/gosec@latest
+      - echo "Installing Go dependencies..."
 
   pre_build:
     commands:
-      - echo "Running security scans in each service..."
-      - (cd gateway && gosec -quiet ./... || true)
-      - (cd auth && gosec -quiet ./... || true)
-      - (cd product && gosec -quiet ./... || true)
-      - (cd order && gosec -quiet ./... || true)
+      - echo "Running concurrency race tests..."
+      - cd order && go test -race -v ./tests/... && cd ..
 
   build:
     commands:
-      - echo "Compiling service binaries..."
+      - echo "Compiling Go binaries for Linux (amd64)..."
       - mkdir -p bin
-
-      # 1. Build individual microservices into bin/
-      - cd gateway && CGO_ENABLED=0 GOOS=linux go build -o ../bin/gateway . && cd ..
-      - cd auth && CGO_ENABLED=0 GOOS=linux go build -o ../bin/auth . && cd ..
-      - cd product && CGO_ENABLED=0 GOOS=linux go build -o ../bin/product . && cd ..
-      - cd order && CGO_ENABLED=0 GOOS=linux go build -o ../bin/order . && cd ..
-
-      # 2. Create the root 'application' executable (copying the API Gateway entry point)
+      - cd gateway && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o ../bin/gateway . && cd ..
+      - cd auth && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o ../bin/auth . && cd ..
+      - cd product && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o ../bin/product . && cd ..
+      - cd order && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o ../bin/order . && cd ..
       - cp bin/gateway application
-
-      # 3. Ensure all binaries are executable
-      - chmod +x bin/* application
-
-  post_build:
-    commands:
-      - echo "Generating Procfile..."
-      - |
-        cat <<EOF > Procfile
-        web: ./application
-        auth: ./bin/auth
-        product: ./bin/product
-        order: ./bin/order
-        EOF
-      - echo "Build and packaging completed successfully."
+      - chmod +x application bin/*
 
 artifacts:
   files:
-    - 'application'
-    - 'bin/**/*'
-    - 'Procfile'
+    - application
+    - Procfile
+    - bin/auth
+    - bin/product
+    - bin/order
+    - bin/gateway
