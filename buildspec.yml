@@ -1,0 +1,27 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      golang: 1.23
+    commands:
+      - go install github.com/securego/gosec/v2/cmd/gosec@latest
+      - go install golang.org/x/vuln/cmd/govulncheck@latest
+
+  pre_build:
+    commands:
+      - govulncheck ./...
+      - gosec -quiet -exclude=G104 ./...
+
+  build:
+    commands:
+      - cd order && go test -v -race ./... && cd ..
+      - CGO_ENABLED=0 GOOS=linux go build -o bin/gateway ./gateway
+      - CGO_ENABLED=0 GOOS=linux go build -o bin/auth ./auth
+      - CGO_ENABLED=0 GOOS=linux go build -o bin/product ./product
+      - CGO_ENABLED=0 GOOS=linux go build -o bin/order ./order
+
+artifacts:
+  files:
+    - bin/*
+    - buildspec.yml
