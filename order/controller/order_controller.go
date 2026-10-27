@@ -1,97 +1,124 @@
 package controller
 
 import (
-	"errors"
+	"context"
 	"net/http"
 	"strconv"
 
+	"github.com/gin-gonic/gin"
 	"order/model"
 	"order/service"
-
-	"github.com/gin-gonic/gin"
-	"gorm.io/gorm"
 )
 
 type OrderController struct {
-	svc service.OrderService
+	orderService *service.OrderService
 }
 
-func NewOrderController(svc service.OrderService) *OrderController {
-	return &OrderController{svc: svc}
+func NewOrderController(svc *service.OrderService) *OrderController {
+	return &OrderController{orderService: svc}
 }
 
-func (c *OrderController) CreateOrder(ctx *gin.Context) {
-	var input model.CreateOrderInput
-	if err := ctx.ShouldBindJSON(&input); err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "customerId, productId, and valid quantity required"})
-		return
-	}
-
-	order, err := c.svc.CreateOrder(ctx.Request.Context(), input)
-	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	ctx.JSON(http.StatusCreated, order)
+type CreateOrderInput struct {
+	CustomerID uint `json:"customerId" binding:"required"`
+	ProductID  uint `json:"productId" binding:"required"`
+	Quantity   int  `json:"quantity" binding:"required,gt=0"`
 }
 
-func (c *OrderController) GetOrder(ctx *gin.Context) {
-	id, err := strconv.ParseUint(ctx.Param("id"), 10, 64)
-	if err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "order ID must be numeric"})
-		return
-	}
-
-	order, err := c.svc.GetOrderByID(ctx.Request.Context(), uint(id))
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		ctx.JSON(http.StatusNotFound, gin.H{"error": "order not found"})
-		return
-	}
-	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	ctx.JSON(http.StatusOK, order)
+type UpdateStatusInput struct {
+	Status string `json:"status" binding:"required"`
 }
 
-func (c *OrderController) ListOrders(ctx *gin.Context) {
-	limit, _ := strconv.Atoi(ctx.DefaultQuery("limit", "10"))
-	offset, _ := strconv.Atoi(ctx.DefaultQuery("offset", "0"))
-
-	orders, err := c.svc.ListOrders(ctx.Request.Context(), limit, offset)
-	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+func (ctrl *OrderController) CreateOrder(c *gin.Context) {
+	var input CreateOrderInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request payload", "details": err.Error()})
 		return
 	}
-	ctx.JSON(http.StatusOK, orders)
+
+	traceID := c.GetHeader("X-Request-ID")
+	if traceID == "" {
+		traceID = c.GetHeader("X-Trace-ID")
+	}
+	ctx := context.WithValue(c.Request.Context(), "TraceID", traceID)
+
+	order := &model.Order{
+		CustomerID: input.CustomerID,
+		ProductID:  input.ProductID,
+		Quantity:   input.Quantity,
+		Status:     "CREATED",
+	}
+
+	createdOrder, err := ctrl.orderService.CreateOrder(ctx, order)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusCreated, createdOrder)
 }
 
-func (c *OrderController) UpdateOrderStatus(ctx *gin.Context) {
-	id, err := strconv.ParseUint(ctx.Param("id"), 10, 64)
+func (ctrl *OrderController) GetOrderByID(c *gin.Context) {
+	idParam := c.Param("id")
+	id, err := strconv.ParseUint(idParam, 10, 32)
 	if err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "order ID must be numeric"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid order ID"})
 		return
 	}
 
-	var input model.UpdateStatusInput
-	if err := ctx.ShouldBindJSON(&input); err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "status field required"})
-		return
-	}
-
-	err = c.svc.UpdateOrderStatus(ctx.Request.Context(), uint(id), input.Status)
-	if errors.Is(err, service.ErrInvalidStatus) {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "status must be CREATED, CONFIRMED, or CANCELLED"})
-		return
-	}
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		ctx.JSON(http.StatusNotFound, gin.H{"error": "order not found"})
-		return
-	}
+	order, err := ctrl.orderService.GetOrderByID(uint(id))
 	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusNotFound, gin.H{"error": "Order not found"})
 		return
 	}
 
-	ctx.JSON(http.StatusOK, gin.H{"message": "order status updated", "status": input.Status})
+	c.JSON(http.StatusOK, order)
+}
+
+func (ctrl *OrderController) ListOrders(c *gin.Context) {
+	orders, err := ctrl.orderService.ListOrders()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, orders)
+}
+
+func (ctrl *OrderController) UpdateOrderStatus(c *gin.Context) {
+	idParam := c.Param("id")
+	id, err := strconv.ParseUint(idParam, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid order ID"})
+		return
+	}
+
+	var input UpdateStatusInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid status payload"})
+		return
+	}
+
+	validStatuses := map[string]bool{
+		"CREATED":   true,
+		"CONFIRMED": true,
+		"CANCELLED": true,
+	}
+
+	if !validStatuses[input.Status] {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Invalid status. Allowed values: CREATED, CONFIRMED, CANCELLED",
+		})
+		return
+	}
+
+	err = ctrl.orderService.UpdateStatus(uint(id), input.Status)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Order status updated successfully",
+		"status":  input.Status,
+	})
 }
