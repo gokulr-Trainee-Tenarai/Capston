@@ -1,17 +1,16 @@
 package repository
 
 import (
-	"context"
-
 	"order/model"
+
 	"gorm.io/gorm"
 )
 
 type OrderRepository interface {
-	Create(ctx context.Context, o *model.Order) error
-	GetByID(ctx context.Context, id uint) (*model.Order, error)
-	List(ctx context.Context, limit, offset int) ([]model.Order, error)
-	UpdateStatus(ctx context.Context, id uint, status model.OrderStatus) error
+	Create(order *model.Order) error
+	GetByID(id uint) (*model.Order, error)
+	GetAll() ([]model.Order, error)
+	UpdateStatus(id uint, status string) error
 }
 
 type orderRepository struct {
@@ -22,32 +21,26 @@ func NewOrderRepository(db *gorm.DB) OrderRepository {
 	return &orderRepository{db: db}
 }
 
-func (r *orderRepository) Create(ctx context.Context, o *model.Order) error {
-	return r.db.WithContext(ctx).Create(o).Error
+func (r *orderRepository) Create(order *model.Order) error {
+	return r.db.Create(order).Error
 }
 
-func (r *orderRepository) GetByID(ctx context.Context, id uint) (*model.Order, error) {
-	var o model.Order
-	err := r.db.WithContext(ctx).First(&o, id).Error
-	if err != nil {
+func (r *orderRepository) GetByID(id uint) (*model.Order, error) {
+	var order model.Order
+	if err := r.db.First(&order, id).Error; err != nil {
 		return nil, err
 	}
-	return &o, nil
+	return &order, nil
 }
 
-func (r *orderRepository) List(ctx context.Context, limit, offset int) ([]model.Order, error) {
+func (r *orderRepository) GetAll() ([]model.Order, error) {
 	var orders []model.Order
-	err := r.db.WithContext(ctx).Limit(limit).Offset(offset).Order("id DESC").Find(&orders).Error
-	return orders, err
+	if err := r.db.Find(&orders).Error; err != nil {
+		return nil, err
+	}
+	return orders, nil
 }
 
-func (r *orderRepository) UpdateStatus(ctx context.Context, id uint, status model.OrderStatus) error {
-	res := r.db.WithContext(ctx).Model(&model.Order{}).Where("id = ?", id).Update("status", status)
-	if res.Error != nil {
-		return res.Error
-	}
-	if res.RowsAffected == 0 {
-		return gorm.ErrRecordNotFound
-	}
-	return nil
+func (r *orderRepository) UpdateStatus(id uint, status string) error {
+	return r.db.Model(&model.Order{}).Where("id = ?", id).Update("status", status).Error
 }
