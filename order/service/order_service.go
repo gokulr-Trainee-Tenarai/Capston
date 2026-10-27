@@ -3,68 +3,46 @@ package service
 import (
 	"context"
 	"errors"
-
 	"order/model"
 	"order/repository"
 )
 
-var ErrInvalidStatus = errors.New("invalid status value")
-
-type OrderService interface {
-	CreateOrder(ctx context.Context, input model.CreateOrderInput) (*model.Order, error)
-	GetOrderByID(ctx context.Context, id uint) (*model.Order, error)
-	ListOrders(ctx context.Context, limit, offset int) ([]model.Order, error)
-	UpdateOrderStatus(ctx context.Context, id uint, status model.OrderStatus) error
+type OrderService struct {
+	orderRepo     *repository.OrderRepository
+	productClient *ProductClient
 }
 
-type orderService struct {
-	repo          repository.OrderRepository
-	productClient ProductClient
+func NewOrderService(repo *repository.OrderRepository, prodClient *ProductClient) *OrderService {
+	return &OrderService{
+		orderRepo:     repo,
+		productClient: prodClient,
+	}
 }
 
-func NewOrderService(repo repository.OrderRepository, prodClient ProductClient) OrderService {
-	return &orderService{repo: repo, productClient: prodClient}
-}
-
-func (s *orderService) CreateOrder(ctx context.Context, input model.CreateOrderInput) (*model.Order, error) {
-	prod, err := s.productClient.GetProductWithResilience(ctx, input.ProductID)
-	unitPrice := 10.0
-	if err == nil && prod != nil {
-		unitPrice = prod.Price
+func (s *OrderService) CreateOrder(ctx context.Context, order *model.Order) (*model.Order, error) {
+	price, err := s.productClient.GetProductPrice(ctx, order.ProductID)
+	if err != nil {
+		return nil, errors.New("failed to retrieve product price: " + err.Error())
 	}
 
-	order := &model.Order{
-		CustomerID:  input.CustomerID,
-		ProductID:   input.ProductID,
-		Quantity:    input.Quantity,
-		UnitPrice:   unitPrice,
-		TotalAmount: unitPrice * float64(input.Quantity),
-		Status:      model.StatusCreated,
-	}
+	order.TotalPrice = price * float64(order.Quantity)
+	order.Status = "CREATED"
 
-	if err := s.repo.Create(ctx, order); err != nil {
+	if err := s.orderRepo.Create(order); err != nil {
 		return nil, err
 	}
+
 	return order, nil
 }
 
-func (s *orderService) GetOrderByID(ctx context.Context, id uint) (*model.Order, error) {
-	return s.repo.GetByID(ctx, id)
+func (s *OrderService) GetOrderByID(id uint) (*model.Order, error) {
+	return s.orderRepo.GetByID(id)
 }
 
-func (s *orderService) ListOrders(ctx context.Context, limit, offset int) ([]model.Order, error) {
-	if limit <= 0 || limit > 100 {
-		limit = 10
-	}
-	if offset < 0 {
-		offset = 0
-	}
-	return s.repo.List(ctx, limit, offset)
+func (s *OrderService) ListOrders() ([]model.Order, error) {
+	return s.orderRepo.GetAll()
 }
 
-func (s *orderService) UpdateOrderStatus(ctx context.Context, id uint, status model.OrderStatus) error {
-	if !status.IsValid() {
-		return ErrInvalidStatus
-	}
-	return s.repo.UpdateStatus(ctx, id, status)
+func (s *OrderService) UpdateStatus(id uint, status string) error {
+	return s.orderRepo.UpdateStatus(id, status)
 }
