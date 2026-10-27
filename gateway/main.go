@@ -144,6 +144,10 @@ func main() {
 
 	// Direct GraphQL proxy
 	r.POST("/graphql", jwtMiddleware(), proxy("order-service", ""))
+	port := os.Getenv("PORT")
+	if port == "" {
+	    port = "10006" // local development
+	}
 
-	r.Run(":10006")
+	r.Run(":" + port)
 }
