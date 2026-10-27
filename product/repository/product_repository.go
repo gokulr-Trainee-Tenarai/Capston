@@ -1,41 +1,43 @@
 package repository
 
 import (
-	"context"
-
 	"product/model"
+
 	"gorm.io/gorm"
 )
 
-type ProductRepository interface {
-	Create(ctx context.Context, p *model.Product) error
-	GetByID(ctx context.Context, id uint) (*model.Product, error)
-	List(ctx context.Context, limit, offset int) ([]model.Product, error)
-}
-
-type productRepository struct {
+type ProductRepository struct {
 	db *gorm.DB
 }
 
-func NewProductRepository(db *gorm.DB) ProductRepository {
-	return &productRepository{db: db}
+func NewProductRepository(db *gorm.DB) *ProductRepository {
+	return &ProductRepository{db: db}
 }
 
-func (r *productRepository) Create(ctx context.Context, p *model.Product) error {
-	return r.db.WithContext(ctx).Create(p).Error
-}
-
-func (r *productRepository) GetByID(ctx context.Context, id uint) (*model.Product, error) {
-	var p model.Product
-	err := r.db.WithContext(ctx).First(&p, id).Error
-	if err != nil {
+func (r *ProductRepository) GetAll() ([]model.Product, error) {
+	var products []model.Product
+	if err := r.db.Find(&products).Error; err != nil {
 		return nil, err
 	}
-	return &p, nil
+	return products, nil
 }
 
-func (r *productRepository) List(ctx context.Context, limit, offset int) ([]model.Product, error) {
-	var products []model.Product
-	err := r.db.WithContext(ctx).Limit(limit).Offset(offset).Order("id DESC").Find(&products).Error
-	return products, err
+func (r *ProductRepository) GetByID(id uint) (*model.Product, error) {
+	var product model.Product
+	if err := r.db.First(&product, id).Error; err != nil {
+		return nil, err
+	}
+	return &product, nil
+}
+
+func (r *ProductRepository) Create(product *model.Product) error {
+	return r.db.Create(product).Error
+}
+
+func (r *ProductRepository) Update(product *model.Product) error {
+	return r.db.Model(&model.Product{}).Where("id = ?", product.ID).Updates(product).Error
+}
+
+func (r *ProductRepository) Delete(id uint) error {
+	return r.db.Delete(&model.Product{}, id).Error
 }
