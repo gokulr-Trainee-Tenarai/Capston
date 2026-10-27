@@ -2,7 +2,8 @@ package main
 
 import (
 	"log"
-	"net/http"
+	"os"
+	"strings"
 
 	"product/config"
 	"product/controller"
@@ -14,29 +15,39 @@ import (
 )
 
 func main() {
-	cfg := config.Load()
+	_ = config.LoadConfig()
 
-	db, err := database.InitDB(cfg)
-	if err != nil {
-		log.Fatal("database connection failed: ", err)
-	}
+	db := database.ConnectPostgres()
+	prodRepo := repository.NewProductRepository(db)
+	prodService := service.NewProductService(prodRepo)
+	prodCtrl := controller.NewProductController(prodService)
 
-	repo := repository.NewProductRepository(db)
-	svc := service.NewProductService(repo)
-	ctrl := controller.NewProductController(svc)
-
+	gin.SetMode(gin.ReleaseMode)
 	r := gin.Default()
 
+	// Internal health check
 	r.GET("/health", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"service": "product", "status": "UP"})
+		c.JSON(200, gin.H{"status": "ok", "service": "product"})
 	})
 
-	r.POST("/products", ctrl.CreateProduct)
-	r.GET("/products/:id", ctrl.GetProduct)
-	r.GET("/products", ctrl.ListProducts)
+	api := r.Group("/api/v1/products")
+	{
+		api.GET("", prodCtrl.GetAllProducts)
+		api.GET("/:id", prodCtrl.GetProductByID)
+		api.POST("", prodCtrl.CreateProduct)
+		api.PUT("/:id", prodCtrl.UpdateProduct)
+		api.DELETE("/:id", prodCtrl.DeleteProduct)
+	}
 
-	log.Printf("Product service running on :%s", cfg.ServerPort)
-	if err := r.Run(":" + cfg.ServerPort); err != nil {
-		log.Fatal(err)
+	// Product port selection
+	port := os.Getenv("PRODUCT_PORT")
+	if port == "" {
+		port = "8084"
+	}
+	port = strings.TrimPrefix(port, ":")
+
+	log.Printf("Starting Product Service on :%s", port)
+	if err := r.Run(":" + port); err != nil {
+		log.Fatalf("Product service failed to start: %v", err)
 	}
 }
