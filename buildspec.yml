@@ -3,12 +3,12 @@ version: 0.2
 phases:
   install:
     commands:
-      - echo "Installing Go dependencies..."
+      - echo "Installing dependencies..."
 
   pre_build:
     commands:
-      - echo "Running concurrency race tests..."
-      - cd order && go test -race -v ./tests/... && cd ..
+      - echo "Running race detector and unit tests..."
+      - cd order && CGO_ENABLED=1 go test -race -v ./tests/... && cd ..
 
   build:
     commands:
