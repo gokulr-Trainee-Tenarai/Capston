@@ -15,29 +15,35 @@ phases:
 
   pre_build:
     commands:
-      - echo "Running security scans..."
-      - gosec -quiet ./... || true
+      - echo "Running security scans in each service..."
+      - (cd gateway && gosec -quiet ./... || true)
+      - (cd auth && gosec -quiet ./... || true)
+      - (cd product && gosec -quiet ./... || true)
+      - (cd order && gosec -quiet ./... || true)
 
   build:
     commands:
-      - echo "Compiling service binaries into bin/..."
+      - echo "Compiling service binaries..."
       - mkdir -p bin
-      # Build native Linux binaries for each microservice
-      - CGO_ENABLED=0 GOOS=linux go build -o bin/gateway ./gateway
-      - CGO_ENABLED=0 GOOS=linux go build -o bin/auth ./auth
-      - CGO_ENABLED=0 GOOS=linux go build -o bin/product ./product
-      - CGO_ENABLED=0 GOOS=linux go build -o bin/order ./order
 
-      # Ensure executable permissions
-      - chmod +x bin/*
+      # 1. Build individual microservices into bin/
+      - cd gateway && CGO_ENABLED=0 GOOS=linux go build -o ../bin/gateway . && cd ..
+      - cd auth && CGO_ENABLED=0 GOOS=linux go build -o ../bin/auth . && cd ..
+      - cd product && CGO_ENABLED=0 GOOS=linux go build -o ../bin/product . && cd ..
+      - cd order && CGO_ENABLED=0 GOOS=linux go build -o ../bin/order . && cd ..
+
+      # 2. Create the root 'application' executable (copying the API Gateway entry point)
+      - cp bin/gateway application
+
+      # 3. Ensure all binaries are executable
+      - chmod +x bin/* application
 
   post_build:
     commands:
       - echo "Generating Procfile..."
-      # Generates a standard Procfile defining the startup processes
       - |
         cat <<EOF > Procfile
-        web: ./bin/gateway
+        web: ./application
         auth: ./bin/auth
         product: ./bin/product
         order: ./bin/order
@@ -46,6 +52,6 @@ phases:
 
 artifacts:
   files:
+    - 'application'
     - 'bin/**/*'
     - 'Procfile'
-  name: application-$(date +%Y-%m-%d-%H%M%S)
