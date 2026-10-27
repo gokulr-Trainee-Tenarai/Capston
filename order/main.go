@@ -3,63 +3,55 @@ package main
 import (
 	"log"
 	"net/http"
+	"os"
+	"strings"
 
-	"order/config"
+	"github.com/gin-gonic/gin"
 	"order/controller"
 	"order/database"
 	"order/middleware"
 	"order/repository"
 	"order/service"
-
-	"github.com/gin-gonic/gin"
 )
 
 func main() {
-	cfg := config.Load()
+	db := database.ConnectPostgres()
+	orderRepo := repository.NewOrderRepository(db)
+	productClient := service.NewProductClient()
+	orderService := service.NewOrderService(orderRepo, productClient)
+	orderCtrl := controller.NewOrderController(orderService)
 
-	db, err := database.InitDB(cfg)
-	if err != nil {
-		log.Fatal("database initialization failed: ", err)
-	}
-
-	repo := repository.NewOrderRepository(db)
-	client := service.NewProductClient(cfg.ProductServiceURL)
-	svc := service.NewOrderService(repo, client)
-	ctrl := controller.NewOrderController(svc)
-
-	gqlHandler, err := controller.NewGraphQLHandler(svc)
-	if err != nil {
-		log.Fatal("GraphQL schema initialization failed: ", err)
-	}
-
+	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
-	r.Use(middleware.RequestID())
-	r.Use(middleware.StructuredLogging())
-	r.Use(middleware.Recovery())
+	r.Use(gin.Recovery())
+	r.Use(middleware.RequestIDMiddleware())
+	r.Use(middleware.StructuredLogger())
 
-	r.GET("/health/live", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"status": "UP"})
-	})
-	r.GET("/health/ready", func(c *gin.Context) {
-		sqlDB, err := db.DB()
-		if err != nil || sqlDB.Ping() != nil {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "DOWN", "error": "db down"})
-			return
-		}
-		c.JSON(http.StatusOK, gin.H{"status": "READY"})
+	// Health check
+	r.GET("/health", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"status": "ok", "service": "order"})
 	})
 
-	// REST routes
-	r.POST("/orders", ctrl.CreateOrder)
-	r.GET("/orders/:id", ctrl.GetOrder)
-	r.GET("/orders", ctrl.ListOrders)
-	r.PUT("/orders/:id/status", ctrl.UpdateOrderStatus)
+	// Order REST routes
+	api := r.Group("/api/v1/orders")
+	{
+		api.POST("", orderCtrl.CreateOrder)
+		api.GET("", orderCtrl.ListOrders)
+		api.GET("/:id", orderCtrl.GetOrderByID)
+		api.PUT("/:id/status", orderCtrl.UpdateOrderStatus)
+	}
 
-	// GraphQL route
-	r.POST("/graphql", gqlHandler.Handle)
+	// GraphQL endpoint (passes db *gorm.DB properly)
+	r.POST("/graphql", controller.GraphQLHandler(db))
 
-	log.Printf("Order service listening on :%s", cfg.ServerPort)
-	if err := r.Run(":" + cfg.ServerPort); err != nil {
-		log.Fatal(err)
+	port := os.Getenv("ORDER_PORT")
+	if port == "" {
+		port = "8082"
+	}
+	port = strings.TrimPrefix(port, ":")
+
+	log.Printf("Starting Order Service on :%s", port)
+	if err := r.Run(":" + port); err != nil {
+		log.Fatalf("Order service failed to start: %v", err)
 	}
 }
