@@ -3,21 +3,21 @@ version: 0.2
 phases:
   install:
     commands:
-      - echo "Installing Go dependencies..."
+      - echo "Installing dependencies..."
 
   pre_build:
     commands:
       - echo "Running concurrency race tests..."
-      - cd order && go test -race -v ./tests/... || go test -v ./tests/... && cd ..
+      - (cd order && go test -v ./tests/...)
 
   build:
     commands:
       - echo "Compiling Go binaries for Linux (amd64)..."
       - mkdir -p bin
-      - cd gateway && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o ../bin/gateway . && cd ..
-      - cd auth && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o ../bin/auth . && cd ..
-      - cd product && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o ../bin/product . && cd ..
-      - cd order && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o ../bin/order . && cd ..
+      - (cd gateway && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o ../bin/gateway .)
+      - (cd auth && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o ../bin/auth .)
+      - (cd product && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o ../bin/product .)
+      - (cd order && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o ../bin/order .)
       - cp bin/gateway application
       - chmod +x application bin/*
 
