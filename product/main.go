@@ -2,21 +2,18 @@ package main
 
 import (
 	"log"
+	"net/http"
 	"os"
 	"strings"
 
-	"product/config"
+	"github.com/gin-gonic/gin"
 	"product/controller"
 	"product/database"
 	"product/repository"
 	"product/service"
-
-	"github.com/gin-gonic/gin"
 )
 
 func main() {
-	_ = config.LoadConfig()
-
 	db := database.ConnectPostgres()
 	prodRepo := repository.NewProductRepository(db)
 	prodService := service.NewProductService(prodRepo)
@@ -25,9 +22,8 @@ func main() {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.Default()
 
-	// Internal health check
 	r.GET("/health", func(c *gin.Context) {
-		c.JSON(200, gin.H{"status": "ok", "service": "product"})
+		c.JSON(http.StatusOK, gin.H{"status": "ok", "service": "product"})
 	})
 
 	api := r.Group("/api/v1/products")
@@ -39,7 +35,6 @@ func main() {
 		api.DELETE("/:id", prodCtrl.DeleteProduct)
 	}
 
-	// Product port selection
 	port := os.Getenv("PRODUCT_PORT")
 	if port == "" {
 		port = "8084"
