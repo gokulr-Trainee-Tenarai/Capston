@@ -28,6 +28,7 @@ type UpdateStatusInput struct {
 	Status string `json:"status" binding:"required"`
 }
 
+// POST /api/v1/orders
 func (ctrl *OrderController) CreateOrder(c *gin.Context) {
 	var input CreateOrderInput
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -57,6 +58,7 @@ func (ctrl *OrderController) CreateOrder(c *gin.Context) {
 	c.JSON(http.StatusCreated, createdOrder)
 }
 
+// GET /api/v1/orders/:id
 func (ctrl *OrderController) GetOrderByID(c *gin.Context) {
 	idParam := c.Param("id")
 	id, err := strconv.ParseUint(idParam, 10, 32)
@@ -74,6 +76,7 @@ func (ctrl *OrderController) GetOrderByID(c *gin.Context) {
 	c.JSON(http.StatusOK, order)
 }
 
+// GET /api/v1/orders
 func (ctrl *OrderController) ListOrders(c *gin.Context) {
 	orders, err := ctrl.orderService.ListOrders()
 	if err != nil {
@@ -84,6 +87,7 @@ func (ctrl *OrderController) ListOrders(c *gin.Context) {
 	c.JSON(http.StatusOK, orders)
 }
 
+// PUT /api/v1/orders/:id/status
 func (ctrl *OrderController) UpdateOrderStatus(c *gin.Context) {
 	idParam := c.Param("id")
 	id, err := strconv.ParseUint(idParam, 10, 32)
