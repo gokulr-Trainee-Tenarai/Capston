@@ -5,7 +5,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
-
+	"os"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	consulapi "github.com/hashicorp/consul/api"
