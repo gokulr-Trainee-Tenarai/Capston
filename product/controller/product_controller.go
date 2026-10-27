@@ -1,77 +1,132 @@
 package controller
 
 import (
-	"errors"
 	"net/http"
 	"strconv"
 
+	"github.com/gin-gonic/gin"
 	"product/model"
 	"product/service"
-
-	"github.com/gin-gonic/gin"
-	"gorm.io/gorm"
 )
 
 type ProductController struct {
-	svc service.ProductService
+	productService *service.ProductService
 }
 
-func NewProductController(svc service.ProductService) *ProductController {
-	return &ProductController{svc: svc}
+func NewProductController(svc *service.ProductService) *ProductController {
+	return &ProductController{productService: svc}
 }
 
-func (c *ProductController) CreateProduct(ctx *gin.Context) {
-	if role := ctx.GetHeader("X-Role"); role != "ADMIN" {
-		ctx.JSON(http.StatusForbidden, gin.H{"error": "forbidden: only admins can create products"})
-		return
-	}
-
-	var input model.CreateProductInput
-	if err := ctx.ShouldBindJSON(&input); err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid payload: name, price (>0), stock (>=0) required"})
-		return
-	}
-
-	user := ctx.GetHeader("X-User")
-	if user == "" {
-		user = "admin"
-	}
-
-	prod, err := c.svc.CreateProduct(ctx.Request.Context(), input, user)
-	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	ctx.JSON(http.StatusCreated, prod)
+type CreateProductInput struct {
+	Name        string  `json:"name" binding:"required"`
+	Description string  `json:"description"`
+	Price       float64 `json:"price" binding:"required,gt=0"`
+	Stock       int     `json:"stock" binding:"required,gte=0"`
 }
 
-func (c *ProductController) GetProduct(ctx *gin.Context) {
-	id, err := strconv.ParseUint(ctx.Param("id"), 10, 64)
-	if err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid product id"})
-		return
-	}
-
-	prod, err := c.svc.GetProductByID(ctx.Request.Context(), uint(id))
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		ctx.JSON(http.StatusNotFound, gin.H{"error": "product not found"})
-		return
-	}
-	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	ctx.JSON(http.StatusOK, prod)
+type UpdateProductInput struct {
+	Name        string  `json:"name"`
+	Description string  `json:"description"`
+	Price       float64 `json:"price" binding:"gt=0"`
+	Stock       int     `json:"stock" binding:"gte=0"`
 }
 
-func (c *ProductController) ListProducts(ctx *gin.Context) {
-	limit, _ := strconv.Atoi(ctx.DefaultQuery("limit", "10"))
-	offset, _ := strconv.Atoi(ctx.DefaultQuery("offset", "0"))
-
-	prods, err := c.svc.ListProducts(ctx.Request.Context(), limit, offset)
+// GET /api/v1/products
+func (ctrl *ProductController) GetAllProducts(c *gin.Context) {
+	products, err := ctrl.productService.GetAllProducts()
 	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	ctx.JSON(http.StatusOK, prods)
+	c.JSON(http.StatusOK, products)
+}
+
+// GET /api/v1/products/:id
+func (ctrl *ProductController) GetProductByID(c *gin.Context) {
+	idParam := c.Param("id")
+	id, err := strconv.ParseUint(idParam, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid product ID"})
+		return
+	}
+
+	product, err := ctrl.productService.GetProductByID(uint(id))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Product not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, product)
+}
+
+// POST /api/v1/products
+func (ctrl *ProductController) CreateProduct(c *gin.Context) {
+	var input CreateProductInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request payload", "details": err.Error()})
+		return
+	}
+
+	product := &model.Product{
+		Name:        input.Name,
+		Description: input.Description,
+		Price:       input.Price,
+		Stock:       input.Stock,
+	}
+
+	created, err := ctrl.productService.CreateProduct(product)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusCreated, created)
+}
+
+// PUT /api/v1/products/:id
+func (ctrl *ProductController) UpdateProduct(c *gin.Context) {
+	idParam := c.Param("id")
+	id, err := strconv.ParseUint(idParam, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid product ID"})
+		return
+	}
+
+	var input UpdateProductInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid update payload", "details": err.Error()})
+		return
+	}
+
+	product := &model.Product{
+		Name:        input.Name,
+		Description: input.Description,
+		Price:       input.Price,
+		Stock:       input.Stock,
+	}
+
+	updated, err := ctrl.productService.UpdateProduct(uint(id), product)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, updated)
+}
+
+// DELETE /api/v1/products/:id
+func (ctrl *ProductController) DeleteProduct(c *gin.Context) {
+	idParam := c.Param("id")
+	id, err := strconv.ParseUint(idParam, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid product ID"})
+		return
+	}
+
+	if err := ctrl.productService.DeleteProduct(uint(id)); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Product deleted successfully"})
 }
