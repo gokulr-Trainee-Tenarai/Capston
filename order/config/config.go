@@ -25,7 +25,7 @@ func Load() Config {
 		DBUser:            getEnv("DB_USER", "postgres"),
 		DBPassword:        getEnv("DB_PASSWORD", "postgres"),
 		DBName:            getEnv("DB_NAME", "orderdb"),
-		ServerPort:        getEnv("SERVER_PORT", "8082"),
+		ServerPort:        getEnv("ORDER_PORT", "8082"),
 		ProductServiceURL: getEnv("PRODUCT_SERVICE_URL", "http://localhost:8084"),
 	}
 }
