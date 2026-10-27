@@ -3,9 +3,11 @@ package main
 import (
 	"fmt"
 	"io"
+	"log"
 	"net/http"
-	"strings"
 	"os"
+	"strings"
+
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	consulapi "github.com/hashicorp/consul/api"
@@ -13,20 +15,36 @@ import (
 
 var secret = []byte("lab2-secret-key-change-me")
 
-func discoverService(name string) (string, error) {
+var defaultServicePorts = map[string]string{
+	"order-service":   "http://127.0.0.1:8082",
+	"product-service": "http://127.0.0.1:8084",
+	"auth-service":    "http://127.0.0.1:8083",
+}
+
+func discoverService(name string) string {
+	envKey := strings.ToUpper(strings.ReplaceAll(name, "-", "_")) + "_URL"
+	if customURL := os.Getenv(envKey); customURL != "" {
+		return strings.TrimRight(customURL, "/")
+	}
+
 	config := consulapi.DefaultConfig()
 	client, err := consulapi.NewClient(config)
-	if err != nil {
-		return "", err
+	if err == nil {
+		entries, _, err := client.Health().Service(name, "", true, nil)
+		if err == nil && len(entries) > 0 {
+			svc := entries[0].Service
+			addr := svc.Address
+			if addr == "" {
+				addr = "127.0.0.1"
+			}
+			return fmt.Sprintf("http://%s:%d", addr, svc.Port)
+		}
 	}
 
-	entries, _, err := client.Health().Service(name, "", false, nil)
-	if err != nil || len(entries) == 0 {
-		return "", fmt.Errorf("service %s not found in consul", name)
+	if fallback, ok := defaultServicePorts[name]; ok {
+		return fallback
 	}
-
-	svc := entries[0].Service
-	return fmt.Sprintf("http://%s:%d", svc.Address, svc.Port), nil
+	return "http://127.0.0.1:8080"
 }
 
 func jwtMiddleware() gin.HandlerFunc {
@@ -50,104 +68,118 @@ func jwtMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		if claims, ok := token.Claims.(jwt.MapClaims); ok {
-			c.Set("user", claims["sub"])
-			c.Set("role", claims["role"])
+		claims, ok := token.Claims.(jwt.MapClaims)
+		if !ok {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token claims"})
+			return
 		}
+
+		if sub, ok := claims["sub"]; ok {
+			c.Set("userID", sub)
+		}
+		if role, ok := claims["role"]; ok {
+			c.Set("role", role)
+		}
+
 		c.Next()
 	}
 }
 
-func requireRole(role string) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		userRole, exists := c.Get("role")
-		if !exists || userRole != role {
-			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "forbidden: requires " + role + " privileges"})
-			return
-		}
-		c.Next()
-	}
-}
+func proxyRequest(getTargetURL func() string) gin.HandlerFunc {
+	client := &http.Client{}
 
-func proxy(serviceName string, pathPrefix string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		targetHost, err := discoverService(serviceName)
-		if err != nil {
-			c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
-			return
-		}
-
-		targetPath := strings.TrimPrefix(c.Request.URL.Path, pathPrefix)
-		targetURL := targetHost + targetPath
-		if c.Request.URL.RawQuery != "" {
-			targetURL += "?" + c.Request.URL.RawQuery
-		}
+		baseURL := getTargetURL()
+		targetURL := fmt.Sprintf("%s%s", baseURL, c.Request.URL.RequestURI())
 
 		req, err := http.NewRequestWithContext(c.Request.Context(), c.Request.Method, targetURL, c.Request.Body)
 		if err != nil {
-			c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create proxy request"})
 			return
 		}
 
 		for k, v := range c.Request.Header {
-			for _, val := range v {
-				req.Header.Add(k, val)
-			}
+			req.Header[k] = v
 		}
 
-		if user, exists := c.Get("user"); exists {
-			req.Header.Set("X-User", fmt.Sprintf("%v", user))
+		traceID := c.GetHeader("X-Request-ID")
+		if traceID == "" {
+			traceID = c.GetHeader("X-Trace-ID")
 		}
-		if role, exists := c.Get("role"); exists {
-			req.Header.Set("X-Role", fmt.Sprintf("%v", role))
+		if traceID != "" {
+			req.Header.Set("X-Request-ID", traceID)
 		}
 
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := client.Do(req)
 		if err != nil {
-			c.JSON(http.StatusBadGateway, gin.H{"error": serviceName + " unavailable"})
+			c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("downstream service unavailable: %v", err)})
 			return
 		}
 		defer resp.Body.Close()
 
 		for k, v := range resp.Header {
-			c.Header(k, strings.Join(v, ","))
+			c.Writer.Header()[k] = v
 		}
 		c.Status(resp.StatusCode)
-		body, _ := io.ReadAll(resp.Body)
-		c.Writer.Write(body)
+		_, _ = io.Copy(c.Writer, resp.Body)
 	}
 }
 
 func main() {
+	gin.SetMode(gin.ReleaseMode)
 	r := gin.Default()
 
+	// ALB health checks
+	r.GET("/", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"status": "healthy", "service": "api-gateway"})
+	})
 	r.GET("/health", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"service": "gateway", "status": "UP"})
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	})
+	r.GET("/health/live", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"status": "ALIVE"})
+	})
+	r.GET("/health/ready", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"status": "READY"})
 	})
 
-	r.POST("/login", func(c *gin.Context) {
-		proxy("auth-service", "")(c)
-	})
+	// Public Auth routes
+	r.POST("/login", proxyRequest(func() string { return discoverService("auth-service") }))
+	r.POST("/register", proxyRequest(func() string { return discoverService("auth-service") }))
 
-	orders := r.Group("/api/v1/orders", jwtMiddleware())
+	// Orders routes
+	orderProxy := proxyRequest(func() string { return discoverService("order-service") })
+	orders := r.Group("/api/v1/orders")
 	{
-		orders.Any("", proxy("order-service", "/api/v1"))
-		orders.Any("/*path", proxy("order-service", "/api/v1"))
+		orders.Any("", orderProxy)
+		orders.Any("/*path", orderProxy)
 	}
 
-	products := r.Group("/api/v1/products", jwtMiddleware())
+	// Products routes
+	prodProxy := proxyRequest(func() string { return discoverService("product-service") })
+	products := r.Group("/api/v1/products")
 	{
-		products.POST("", requireRole("ADMIN"), proxy("product-service", "/api/v1"))
-		products.GET("", proxy("product-service", "/api/v1"))
-		products.GET("/:id", proxy("product-service", "/api/v1"))
+		products.GET("", prodProxy)
+		products.GET("/:id", prodProxy)
+		products.POST("", jwtMiddleware(), prodProxy)
+		products.PUT("/:id", jwtMiddleware(), prodProxy)
+		products.DELETE("/:id", jwtMiddleware(), prodProxy)
 	}
 
-	// Direct GraphQL proxy
-	r.POST("/graphql", jwtMiddleware(), proxy("order-service", ""))
+	// GraphQL
+	r.POST("/graphql", prodProxy)
+
 	port := os.Getenv("PORT")
 	if port == "" {
-	    port = "10006" // local development
+		port = os.Getenv("APP_PORT")
 	}
+	if port == "" {
+		port = "5000"
+	}
+	port = strings.TrimPrefix(port, ":")
 
-	r.Run(":" + port)
+	log.Printf("Starting API Gateway on :%s", port)
+	if err := r.Run(":" + port); err != nil {
+		log.Fatalf("API Gateway run error: %v", err)
+	}
 }
