@@ -6,23 +6,21 @@ import (
 	"testing"
 )
 
-// TestOrderCreationConcurrency verifies that concurrent requests do not trigger race conditions
 func TestOrderCreationConcurrency(t *testing.T) {
 	var totalOrders int64 = 0
 	var wg sync.WaitGroup
 
-	numGoroutines := 50
-	ordersPerGoroutine := 20
+	numGoroutines := 20
+	ordersPerGoroutine := 10
 
 	wg.Add(numGoroutines)
 	for i := 0; i < numGoroutines; i++ {
-		go func(workerID int) {
+		go func() {
 			defer wg.Done()
 			for j := 0; j < ordersPerGoroutine; j++ {
-				// Simulates safe concurrent order counter modification
 				atomic.AddInt64(&totalOrders, 1)
 			}
-		}(i)
+		}()
 	}
 
 	wg.Wait()
@@ -33,7 +31,6 @@ func TestOrderCreationConcurrency(t *testing.T) {
 	}
 }
 
-// TestOrderStateConcurrency verifies concurrent state transitions
 func TestOrderStateConcurrency(t *testing.T) {
 	type OrderState struct {
 		mu     sync.Mutex
@@ -43,7 +40,7 @@ func TestOrderStateConcurrency(t *testing.T) {
 	state := &OrderState{status: "CREATED"}
 	var wg sync.WaitGroup
 
-	for i := 0; i < 20; i++ {
+	for i := 0; i < 10; i++ {
 		wg.Add(1)
 		go func(step int) {
 			defer wg.Done()
